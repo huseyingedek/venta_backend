@@ -1,0 +1,374 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL")
+}
+
+// ─── KULLANICI ───────────────────────────────────────────────────────────────
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  firstName    String
+  lastName     String
+  phone        String?
+  role         Role     @default(CUSTOMER)
+  isActive     Boolean  @default(true)
+  emailVerified Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  addresses    Address[]
+  orders       Order[]
+  cart         Cart?
+  reviews      Review[]
+  refreshTokens RefreshToken[]
+  wishlist     Wishlist[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+model Address {
+  id         String  @id @default(uuid())
+  userId     String
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String  // Ev, İş vb.
+  firstName  String
+  lastName   String
+  phone      String
+  city       String
+  district   String
+  neighborhood String?
+  postalCode String?
+  fullAddress String
+  isDefault  Boolean @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  orders     Order[]
+
+  @@map("addresses")
+}
+
+// ─── KATEGORİ ────────────────────────────────────────────────────────────────
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  slug        String    @unique
+  description String?
+  image       String?
+  parentId    String?
+  parent      Category? @relation("CategoryChildren", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryChildren")
+  isActive    Boolean   @default(true)
+  sortOrder   Int       @default(0)
+  metaTitle   String?
+  metaDesc    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products    Product[]
+
+  @@map("categories")
+}
+
+// ─── TEDARİKÇİ ───────────────────────────────────────────────────────────────
+
+model Supplier {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  contactName String?
+  email       String?
+  phone       String?
+  website     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  xmlFeeds    XmlFeed[]
+  products    Product[]
+
+  @@map("suppliers")
+}
+
+model XmlFeed {
+  id           String    @id @default(uuid())
+  supplierId   String
+  supplier     Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  name         String
+  url          String
+  isActive     Boolean   @default(true)
+  cronSchedule String    @default("0 */6 * * *") // her 6 saatte bir
+  lastSyncAt   DateTime?
+  lastSyncStatus String? // success, error
+  lastSyncMessage String?
+  fieldMapping Json?     // XML alan → DB alan mapping
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("xml_feeds")
+}
+
+// ─── ÜRÜN ────────────────────────────────────────────────────────────────────
+
+enum ProductSource {
+  MANUAL
+  XML
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+  DRAFT
+}
+
+model Product {
+  id          String        @id @default(uuid())
+  name        String
+  slug        String        @unique
+  sku         String?       @unique
+  barcode     String?
+  description String?       @db.Text
+  shortDesc   String?
+  categoryId  String
+  category    Category      @relation(fields: [categoryId], references: [id])
+  supplierId  String?
+  supplier    Supplier?     @relation(fields: [supplierId], references: [id])
+  source      ProductSource @default(MANUAL)
+  status      ProductStatus @default(ACTIVE)
+
+  // Fiyat
+  price       Decimal       @db.Decimal(10, 2)
+  comparePrice Decimal?     @db.Decimal(10, 2)  // üstü çizili eski fiyat
+  costPrice   Decimal?      @db.Decimal(10, 2)  // maliyet (admin görür)
+  taxRate     Decimal       @default(18) @db.Decimal(5, 2)
+
+  // Stok
+  stock       Int           @default(0)
+  lowStockAlert Int         @default(5)
+  trackStock  Boolean       @default(true)
+
+  // Görsel
+  images      ProductImage[]
+  thumbnail   String?
+
+  // SEO
+  metaTitle   String?
+  metaDesc    String?
+  metaKeywords String?
+
+  // Varyant/Özellik
+  attributes  ProductAttribute[]
+  variants    ProductVariant[]
+
+  // XML ile gelen orijinal veri
+  externalId  String?
+  xmlData     Json?
+
+  isFeatured  Boolean @default(false)
+  isNew       Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems  OrderItem[]
+  cartItems   CartItem[]
+  reviews     Review[]
+  wishlist    Wishlist[]
+
+  @@map("products")
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+  createdAt DateTime @default(now())
+
+  @@map("product_images")
+}
+
+model ProductAttribute {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String  // Renk, Beden, Malzeme vb.
+  value     String
+
+  @@map("product_attributes")
+}
+
+model ProductVariant {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku       String?
+  name      String  // örn: Kırmızı / XL
+  price     Decimal? @db.Decimal(10, 2)
+  stock     Int     @default(0)
+  image     String?
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("product_variants")
+}
+
+// ─── SEPET ───────────────────────────────────────────────────────────────────
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  items     CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String  @id @default(uuid())
+  cartId    String
+  cart      Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  variantId String?
+  quantity  Int     @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, productId, variantId])
+  @@map("cart_items")
+}
+
+// ─── FAVORI ──────────────────────────────────────────────────────────────────
+
+model Wishlist {
+  id        String  @id @default(uuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@map("wishlists")
+}
+
+// ─── SİPARİŞ ─────────────────────────────────────────────────────────────────
+
+enum OrderStatus {
+  PENDING
+  PAYMENT_PENDING
+  PAYMENT_FAILED
+  CONFIRMED
+  PREPARING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  BANK_TRANSFER
+  CASH_ON_DELIVERY
+}
+
+model Order {
+  id              String        @id @default(uuid())
+  orderNumber     String        @unique
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  addressId       String
+  address         Address       @relation(fields: [addressId], references: [id])
+  status          OrderStatus   @default(PENDING)
+  paymentMethod   PaymentMethod @default(CREDIT_CARD)
+  paymentStatus   String        @default("pending")
+  iyzicoPaymentId String?
+  iyzicoToken     String?
+
+  subtotal        Decimal @db.Decimal(10, 2)
+  shippingCost    Decimal @default(0) @db.Decimal(10, 2)
+  discount        Decimal @default(0) @db.Decimal(10, 2)
+  tax             Decimal @db.Decimal(10, 2)
+  total           Decimal @db.Decimal(10, 2)
+
+  couponCode      String?
+  notes           String?
+  cargoTrackingNo String?
+  cargoCompany    String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  variantId   String?
+  productName String  // sipariş anındaki isim
+  productSku  String?
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(10, 2)
+
+  @@map("order_items")
+}
+
+// ─── DEĞERLENDİRME ───────────────────────────────────────────────────────────
+
+model Review {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int     // 1-5
+  title     String?
+  comment   String? @db.Text
+  isApproved Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, userId])
+  @@map("reviews")
+}
