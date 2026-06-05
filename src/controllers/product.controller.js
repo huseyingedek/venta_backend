@@ -116,7 +116,7 @@ const createProduct = async (req, res, next) => {
         costPrice:    costPrice    ? parseFloat(costPrice)    : null,
         stock:        parseInt(stock)  || 0,
         taxRate:      parseFloat(taxRate) || 18,
-        sku:          sku          || null,
+        sku:          sku?.trim()   || null,
         description:  description  || null,
         shortDesc:    shortDesc    || null,
         status:       status       || 'ACTIVE',
@@ -138,6 +138,9 @@ const createProduct = async (req, res, next) => {
 
     res.status(201).json({ success: true, data: product });
   } catch (err) {
+    if (err.code === 'P2002' && err.meta?.target?.includes('sku')) {
+      return res.status(409).json({ success: false, message: 'Bu SKU kodu zaten kullanılıyor. Farklı bir SKU girin veya boş bırakın.' });
+    }
     next(err);
   }
 };
@@ -160,7 +163,7 @@ const updateProduct = async (req, res, next) => {
       ...(costPrice    !== undefined && { costPrice:    costPrice    ? parseFloat(costPrice)    : null }),
       ...(stock        !== undefined && { stock:        parseInt(stock) || 0 }),
       ...(taxRate      !== undefined && { taxRate:      parseFloat(taxRate) || 18 }),
-      ...(sku          !== undefined && { sku:          sku || null }),
+      ...(sku          !== undefined && { sku:          sku?.trim() || null }),
       ...(description  !== undefined && { description:  description || null }),
       ...(shortDesc    !== undefined && { shortDesc:    shortDesc   || null }),
       ...(status       !== undefined && { status }),
@@ -193,6 +196,9 @@ const updateProduct = async (req, res, next) => {
 
     res.json({ success: true, data: product });
   } catch (err) {
+    if (err.code === 'P2002' && err.meta?.target?.includes('sku')) {
+      return res.status(409).json({ success: false, message: 'Bu SKU kodu zaten kullanılıyor. Farklı bir SKU girin veya boş bırakın.' });
+    }
     next(err);
   }
 };
