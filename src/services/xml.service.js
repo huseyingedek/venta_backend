@@ -4,10 +4,67 @@ const prisma = require('../config/prisma');
 const slugify = require('../utils/slugify');
 const { logger } = require('../utils/logger');
 
-const parser = new xml2js.Parser({ explicitArray: false, mergeAttrs: true });
+const parser = new xml2js.Parser({ explicitArray: false, mergeAttrs: true, trim: true });
 
 /**
- * XML feed'i çekip ürünleri güncelle/oluştur
+ * xmltedarik.com XML yapısını parse et
+ * <products><product>...</product></products>
+ */
+const parseXmlTedarik = (parsed) => {
+  const root = parsed?.products?.product;
+  if (!root) return null;
+  return Array.isArray(root) ? root : [root];
+};
+
+/**
+ * Kategori yolundan (ör: "Spor & Outdoor >>> Kamp >>> Elektronik") kategori bul/oluştur
+ */
+const findOrCreateCategory = async (categoryPath) => {
+  if (!categoryPath) return null;
+
+  // "Aksesuar >>> Diğer Aksesuar >>> Tesbih" → ["Aksesuar", "Diğer Aksesuar", "Tesbih"]
+  const parts = categoryPath.split('>>>').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+
+  let parentId = null;
+
+  for (const part of parts) {
+    const slug = slugify(part);
+    let category = await prisma.category.findFirst({
+      where: { slug, parentId: parentId || null },
+    });
+
+    if (!category) {
+      // slug çakışması ihtimaline karşı suffix ekle
+      const slugFinal = parentId
+        ? `${slug}-${String(parentId).slice(-4)}`
+        : slug;
+
+      category = await prisma.category.upsert({
+        where: { slug: slugFinal },
+        update: {},
+        create: { name: part, slug: slugFinal, parentId: parentId || null },
+      });
+    }
+
+    parentId = category.id;
+  }
+
+  return parentId;
+};
+
+/**
+ * Benzersiz slug üret
+ */
+const generateUniqueSlug = async (name, externalId) => {
+  const base = slugify(name);
+  const existing = await prisma.product.findFirst({ where: { slug: base } });
+  if (!existing) return base;
+  return `${base}-${String(externalId).slice(-6)}`;
+};
+
+/**
+ * Tek XML feed senkronize et
  */
 const syncXmlFeed = async (feedId) => {
   const feed = await prisma.xmlFeed.findUnique({
@@ -17,81 +74,124 @@ const syncXmlFeed = async (feedId) => {
 
   if (!feed || !feed.isActive) {
     logger.warn(`XML Feed ${feedId} aktif değil veya bulunamadı.`);
-    return;
+    return { created: 0, updated: 0, skipped: 0 };
   }
 
-  logger.info(`XML senkronizasyonu başladı: ${feed.name} (${feed.url})`);
+  logger.info(`XML sync başladı: ${feed.name}`);
 
   try {
-    const response = await axios.get(feed.url, { timeout: 30000, responseType: 'text' });
+    const response = await axios.get(feed.url, {
+      timeout: 60000,
+      responseType: 'text',
+      headers: { 'Accept-Encoding': 'gzip, deflate' },
+    });
+
     const parsed = await parser.parseStringPromise(response.data);
+    const products = parseXmlTedarik(parsed);
+    if (!products) throw new Error('XML yapısı tanınamadı (products.product bulunamadı).');
 
-    // Field mapping - tedarikçiye göre özelleştirilebilir
-    const mapping = feed.fieldMapping || {
-      root: 'products.product',   // XML'deki ürün listesi yolu
-      name: 'name',
-      sku: 'code',
-      price: 'price',
-      stock: 'stock',
-      description: 'description',
-      image: 'image',
-      category: 'category',
-    };
-
-    const products = getNestedValue(parsed, mapping.root);
-    if (!products) throw new Error('XML yapısı tanınamadı.');
-
-    const productArray = Array.isArray(products) ? products : [products];
     let created = 0, updated = 0, skipped = 0;
 
-    for (const item of productArray) {
+    for (const item of products) {
       try {
-        const externalId = getNestedValue(item, mapping.sku || 'code') || getNestedValue(item, 'id');
-        const name = getNestedValue(item, mapping.name || 'name');
-        const price = parseFloat(getNestedValue(item, mapping.price || 'price')) || 0;
-        const stock = parseInt(getNestedValue(item, mapping.stock || 'stock')) || 0;
-        const description = getNestedValue(item, mapping.description || 'description');
-        const imageUrl = getNestedValue(item, mapping.image || 'image');
+        // Aktif olmayan ürünleri atla
+        if (item.active === '0' || item.active === 0) { skipped++; continue; }
+
+        const externalId = String(item.id || '').trim();
+        const sku        = String(item.productCode || '').trim() || null;
+        const name       = String(item.name || '').trim();
+        const price      = parseFloat(item.listPrice || item.price || 0);
+        const stock      = parseInt(item.quantity || 0);
+        const description = item.detail ? String(item.detail).trim() : null;
+        const thumbnail  = item.image1 || null;
 
         if (!name || !externalId) { skipped++; continue; }
 
-        const slug = await generateUniqueSlug(name, externalId);
+        // Çoklu resimler
+        const imageUrls = ['image1','image2','image3','image4','image5']
+          .map(k => item[k])
+          .filter(Boolean);
+
+        // Kategori
+        const categoryPath = String(item.category || item.main_category || '').trim();
+        const categoryId = await findOrCreateCategory(categoryPath);
+
+        // Varsayılan kategori yoksa oluştur
+        let finalCategoryId = categoryId;
+        if (!finalCategoryId) {
+          const def = await prisma.category.upsert({
+            where: { slug: 'genel' },
+            update: {},
+            create: { name: 'Genel', slug: 'genel' },
+          });
+          finalCategoryId = def.id;
+        }
 
         const existing = await prisma.product.findFirst({
           where: { externalId, supplierId: feed.supplierId },
         });
 
-        const productData = {
-          name,
-          price,
-          stock,
-          description: description || null,
-          thumbnail: imageUrl || null,
-          supplierId: feed.supplierId,
-          source: 'XML',
-          xmlData: item,
-          status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
-        };
-
         if (existing) {
-          await prisma.product.update({ where: { id: existing.id }, data: productData });
-          updated++;
-        } else {
-          // XML ile gelen ürün için kategori gerekliyse otomatik ata ya da varsayılan kullan
-          const defaultCategory = await prisma.category.findFirst({ where: { parentId: null } });
-          await prisma.product.create({
+          // Güncelle — slug ve sku değiştirme
+          await prisma.product.update({
+            where: { id: existing.id },
             data: {
-              ...productData,
-              slug,
-              externalId: String(externalId),
-              sku: String(externalId),
-              categoryId: defaultCategory?.id || (await createDefaultCategory()),
+              name,
+              price,
+              stock,
+              description,
+              thumbnail,
+              categoryId: finalCategoryId,
+              status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
+              xmlData: item,
             },
           });
+
+          // Görselleri güncelle
+          await prisma.productImage.deleteMany({ where: { productId: existing.id } });
+          if (imageUrls.length > 0) {
+            await prisma.productImage.createMany({
+              data: imageUrls.map((url, i) => ({ productId: existing.id, url, sortOrder: i })),
+            });
+          }
+          updated++;
+        } else {
+          const slug = await generateUniqueSlug(name, externalId);
+
+          // SKU çakışma kontrolü
+          let finalSku = sku;
+          if (finalSku) {
+            const skuExists = await prisma.product.findUnique({ where: { sku: finalSku } });
+            if (skuExists) finalSku = `${finalSku}-${externalId.slice(-4)}`;
+          }
+
+          const newProduct = await prisma.product.create({
+            data: {
+              name,
+              slug,
+              price,
+              stock,
+              description,
+              thumbnail,
+              sku: finalSku,
+              externalId,
+              supplierId: feed.supplierId,
+              categoryId: finalCategoryId,
+              source: 'XML',
+              status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
+              xmlData: item,
+            },
+          });
+
+          if (imageUrls.length > 0) {
+            await prisma.productImage.createMany({
+              data: imageUrls.map((url, i) => ({ productId: newProduct.id, url, sortOrder: i })),
+            });
+          }
           created++;
         }
       } catch (itemErr) {
-        logger.error(`Ürün işlenirken hata: ${itemErr.message}`);
+        logger.error(`Ürün işlenirken hata [${item?.id}]: ${itemErr.message}`);
         skipped++;
       }
     }
@@ -133,25 +233,6 @@ const syncAllFeeds = async () => {
     }
   }
   return results;
-};
-
-// Yardımcı: nesne içinde nokta-notasyonlu yol
-const getNestedValue = (obj, path) => {
-  return path.split('.').reduce((acc, key) => acc?.[key], obj);
-};
-
-const generateUniqueSlug = async (name, externalId) => {
-  const base = slugify(name);
-  const existing = await prisma.product.findFirst({ where: { slug: base } });
-  if (!existing) return base;
-  return `${base}-${String(externalId).slice(-6)}`;
-};
-
-const createDefaultCategory = async () => {
-  const cat = await prisma.category.create({
-    data: { name: 'Genel', slug: 'genel' },
-  });
-  return cat.id;
 };
 
 module.exports = { syncXmlFeed, syncAllFeeds };
