@@ -5,7 +5,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
-const rateLimit = require('express-rate-limit');
 const path = require('path');
 
 const { logger } = require('./utils/logger');
@@ -39,12 +38,6 @@ app.use(cors({
 }));
 
 // Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 dakika
-  max: 100,
-  message: 'Çok fazla istek gönderildi, lütfen 15 dakika sonra tekrar deneyin.',
-});
-app.use('/api/', limiter);
 
 // Body parsing
 app.use(compression());
