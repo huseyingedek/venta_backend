@@ -7,6 +7,26 @@ const { logger } = require('../utils/logger');
 const parser = new xml2js.Parser({ explicitArray: false, mergeAttrs: true, trim: true });
 
 /**
+ * Kategori adına göre KDV oranı döndür (2026 güncel oranlar)
+ * %10: giyim, ayakkabı, terlik, çanta, bavul
+ * %1:  temel gıda
+ * %20: diğer her şey (elektronik, kozmetik, mobilya, vb.)
+ */
+const getTaxRateByCategory = (categoryPath = '') => {
+  const lower = categoryPath.toLowerCase();
+  // %10 — giyim grubu
+  if (/giyim|elbise|pantolon|gömlek|mont|ceket|kazak|tişört|t-shirt|ayakkabı|bot|sneaker|terlik|sandalet|çanta|bavul|çorap|iç çamaşır|sütyen|külot/.test(lower)) {
+    return 10;
+  }
+  // %1 — temel gıda
+  if (/gıda|bakliyat|tahıl|un|ekmek|pirinç|makarna/.test(lower)) {
+    return 1;
+  }
+  // %20 — varsayılan
+  return 20;
+};
+
+/**
  * xmltedarik.com XML yapısını parse et
  * <products><product>...</product></products>
  */
@@ -134,6 +154,8 @@ const syncXmlFeed = async (feedId) => {
           finalCategoryId = def.id;
         }
 
+        const taxRate = getTaxRateByCategory(categoryPath);
+
         const existing = await prisma.product.findFirst({
           where: { externalId, supplierId: feed.supplierId },
         });
@@ -149,6 +171,7 @@ const syncXmlFeed = async (feedId) => {
               description,
               thumbnail,
               categoryId: finalCategoryId,
+              taxRate,
               status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
               xmlData: item,
             },
@@ -184,6 +207,7 @@ const syncXmlFeed = async (feedId) => {
               externalId,
               supplierId: feed.supplierId,
               categoryId: finalCategoryId,
+              taxRate,
               source: 'XML',
               status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
               xmlData: item,

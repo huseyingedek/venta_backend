@@ -7,15 +7,24 @@ const getProducts = async (req, res, next) => {
     const {
       page = 1, limit = 20, category, search,
       minPrice, maxPrice, sort = 'createdAt', order = 'desc',
-      featured, isNew, status = 'ACTIVE',
+      featured, isNew, hasDiscount, status = 'ACTIVE',
     } = req.query;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const where = { status };
 
-    if (category) where.category = { slug: category };
+    if (category) {
+      // Kategori ve tüm alt kategorilerini bul
+      const categoryIds = await getAllCategoryIds(category);
+      if (categoryIds.length > 0) {
+        where.categoryId = { in: categoryIds };
+      } else {
+        where.category = { slug: category };
+      }
+    }
     if (featured === 'true') where.isFeatured = true;
     if (isNew === 'true') where.isNew = true;
+    if (hasDiscount === 'true') where.comparePrice = { not: null };
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -244,6 +253,29 @@ const getProductById = async (req, res, next) => {
     if (!product) return res.status(404).json({ success: false, message: 'Ürün bulunamadı.' });
     res.json({ success: true, data: product });
   } catch (err) { next(err); }
+};
+
+// Kategori ve tüm alt kategorilerin ID'lerini recursive olarak getir
+const getAllCategoryIds = async (slug) => {
+  const root = await prisma.category.findFirst({ where: { slug } });
+  if (!root) return [];
+
+  const ids = [root.id];
+  const queue = [root.id];
+
+  while (queue.length > 0) {
+    const parentId = queue.shift();
+    const children = await prisma.category.findMany({
+      where: { parentId },
+      select: { id: true },
+    });
+    for (const child of children) {
+      ids.push(child.id);
+      queue.push(child.id);
+    }
+  }
+
+  return ids;
 };
 
 module.exports = { getProducts, getProduct, getProductById, createProduct, updateProduct, deleteProduct };

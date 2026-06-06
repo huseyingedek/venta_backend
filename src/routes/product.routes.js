@@ -17,7 +17,7 @@ router.get('/:slug/related', async (req, res, next) => {
 
     const related = await prisma.product.findMany({
       where: { categoryId: product.categoryId, id: { not: product.id }, status: 'ACTIVE' },
-      take: 4,
+      take: 12,
       orderBy: { createdAt: 'desc' },
       select: {
         id: true, name: true, slug: true, price: true, comparePrice: true,
