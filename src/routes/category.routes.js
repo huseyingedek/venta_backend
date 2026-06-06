@@ -18,21 +18,47 @@ const generateUniqueSlug = async (name, excludeId = null) => {
 };
 
 // GET /api/v1/categories
-// ?all=true  → admin için tüm kategoriler (pasif dahil)
+// ?all=true  → admin için tüm kategoriler (pasif dahil), 3 seviye nested
 router.get('/', async (req, res, next) => {
   try {
     const showAll = req.query.all === 'true';
+    const where = showAll ? {} : { isActive: true };
     const categories = await prisma.category.findMany({
-      where: { parentId: null, ...(!showAll && { isActive: true }) },
+      where: { parentId: null, ...where },
       include: {
-        children: {
-          where: showAll ? {} : { isActive: true },
-          orderBy: { sortOrder: 'asc' },
-          include: { _count: { select: { products: true } } },
-        },
         _count: { select: { products: true } },
+        children: {
+          where,
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            _count: { select: { products: true } },
+            children: {
+              where,
+              orderBy: { sortOrder: 'asc' },
+              include: {
+                _count: { select: { products: true } },
+                children: {
+                  where,
+                  orderBy: { sortOrder: 'asc' },
+                  include: { _count: { select: { products: true } } },
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { sortOrder: 'asc' },
+    });
+    res.json({ success: true, data: categories });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v1/categories/flat  → tüm kategoriler düz liste (admin dropdown için, isActive filtresi yok)
+router.get('/flat', async (req, res, next) => {
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, slug: true, parentId: true },
     });
     res.json({ success: true, data: categories });
   } catch (err) { next(err); }

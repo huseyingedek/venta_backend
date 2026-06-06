@@ -35,6 +35,20 @@ router.post('/', authenticate, authorize('ADMIN', 'SUPER_ADMIN'), createProduct)
 router.put('/:id', authenticate, authorize('ADMIN', 'SUPER_ADMIN'), updateProduct);
 router.delete('/:id', authenticate, authorize('ADMIN', 'SUPER_ADMIN'), deleteProduct);
 
+// PATCH /api/v1/products/:id/toggle-featured
+router.patch('/:id/toggle-featured', authenticate, authorize('ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const product = await prisma.product.findUnique({ where: { id: req.params.id }, select: { isFeatured: true } });
+    if (!product) return res.status(404).json({ success: false, message: 'Ürün bulunamadı' });
+    const updated = await prisma.product.update({
+      where: { id: req.params.id },
+      data: { isFeatured: !product.isFeatured },
+      select: { id: true, isFeatured: true },
+    });
+    res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+});
+
 // Ürün görseli kaydet
 router.post('/:id/images', authenticate, authorize('ADMIN', 'SUPER_ADMIN'), async (req, res, next) => {
   try {

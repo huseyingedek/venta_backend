@@ -197,10 +197,11 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  orderItems  OrderItem[]
-  cartItems   CartItem[]
-  reviews     Review[]
-  wishlist    Wishlist[]
+  orderItems        OrderItem[]
+  cartItems         CartItem[]
+  reviews           Review[]
+  wishlist          Wishlist[]
+  homepageSections  HomepageSectionProduct[]
 
   @@map("products")
 }
@@ -371,4 +372,33 @@ model Review {
 
   @@unique([productId, userId])
   @@map("reviews")
+}
+
+// ─── ANASAYFA YÖNETİMİ ───────────────────────────────────────────────────────
+
+model HomepageSection {
+  id        String    @id @default(uuid())
+  title     String
+  subtitle  String?
+  linkUrl   String?
+  sortOrder Int       @default(0)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  products  HomepageSectionProduct[]
+
+  @@map("homepage_sections")
+}
+
+model HomepageSectionProduct {
+  id        String          @id @default(uuid())
+  sectionId String
+  section   HomepageSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sortOrder Int             @default(0)
+
+  @@unique([sectionId, productId])
+  @@map("homepage_section_products")
 }
