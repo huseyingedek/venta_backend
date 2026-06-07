@@ -44,7 +44,9 @@ router.post('/resend-verification', authenticate, async (req, res, next) => {
     if (user.emailVerified) return res.json({ success: true, message: 'E-posta zaten doğrulanmış.' });
 
     const token = generateVerifyToken(user.id, user.createdAt.toISOString());
-    const verifyUrl = `${process.env.CLIENT_URL}/auth/verify-email?token=${token}&id=${user.id}`;
+    // CLIENT_URL virgüllü CORS listesi olabilir — ilk değeri al
+    const clientBase = (process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://ventapremium.com.tr').split(',')[0].trim();
+    const verifyUrl = `${clientBase}/auth/verify-email?token=${token}&id=${user.id}`;
     await sendVerificationEmail({ to: user.email, firstName: user.firstName, verifyUrl });
 
     res.json({ success: true, message: 'Doğrulama maili tekrar gönderildi.' });
