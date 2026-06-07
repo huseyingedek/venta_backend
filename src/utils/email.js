@@ -1,21 +1,25 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-const createTransporter = () => {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return null;
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
+const getResend = () => {
+  if (!process.env.RESEND_API_KEY) return null;
+  return new Resend(process.env.RESEND_API_KEY);
+};
+
+const FROM = `"${process.env.FROM_NAME || 'Venta Premium'}" <${process.env.FROM_EMAIL || 'noreply@ventapremium.com.tr}>`;
+
+const sendMail = async ({ to, subject, html }) => {
+  const resend = getResend();
+  if (!resend) {
+    console.log(`\n[EMAIL-MOCK] To: ${to} | Subject: ${subject}`);
+    return;
+  }
+  const { error } = await resend.emails.send({ from: FROM, to, subject, html });
+  if (error) throw new Error(error.message);
 };
 
 const sendPasswordResetEmail = async ({ to, firstName, resetUrl }) => {
-  const transporter = createTransporter();
-
   const html = `
-    <!DOCTYPE html>
-    <html lang="tr">
+    <!DOCTYPE html><html lang="tr">
     <body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px;">
       <div style="max-width:500px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;">
         <div style="background:#0f172a;padding:24px;text-align:center;">
@@ -26,40 +30,22 @@ const sendPasswordResetEmail = async ({ to, firstName, resetUrl }) => {
           <p style="color:#64748b;margin:0 0 8px;">Merhaba <strong>${firstName}</strong>,</p>
           <p style="color:#64748b;margin:0 0 24px;">Şifre sıfırlama talebinde bulundunuz. Aşağıdaki butona tıklayarak şifrenizi sıfırlayabilirsiniz.</p>
           <div style="text-align:center;margin:0 0 24px;">
-            <a href="${resetUrl}"
-               style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;padding:14px 32px;border-radius:10px;font-weight:bold;font-size:15px;">
+            <a href="${resetUrl}" style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;padding:14px 32px;border-radius:10px;font-weight:bold;font-size:15px;">
               Şifremi Sıfırla
             </a>
           </div>
           <p style="color:#94a3b8;font-size:13px;margin:0 0 8px;">Bu link <strong>1 saat</strong> geçerlidir.</p>
           <p style="color:#94a3b8;font-size:13px;margin:0;">Bu talebi siz yapmadıysanız bu e-postayı görmezden gelin.</p>
           <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
-          <p style="color:#cbd5e1;font-size:12px;text-align:center;margin:0;">© 2024 Venta Premium. Tüm hakları saklıdır.</p>
+          <p style="color:#cbd5e1;font-size:12px;text-align:center;margin:0;">© 2025 Venta Premium. Tüm hakları saklıdır.</p>
         </div>
       </div>
-    </body>
-    </html>
+    </body></html>
   `;
-
-  if (!transporter) {
-    // E-posta yapılandırması yoksa konsola yaz (geliştirme modu)
-    console.log('\n========== ŞİFRE SIFIRLAMA LİNKİ ==========');
-    console.log(`Kullanıcı: ${to}`);
-    console.log(`Link: ${resetUrl}`);
-    console.log('=============================================\n');
-    return;
-  }
-
-  await transporter.sendMail({
-    from: `"${process.env.FROM_NAME || 'Venta Premium'}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
-    to,
-    subject: 'Şifre Sıfırlama — Venta Premium',
-    html,
-  });
+  await sendMail({ to, subject: 'Şifre Sıfırlama — Venta Premium', html });
 };
 
 const sendVerificationEmail = async ({ to, firstName, verifyUrl }) => {
-  const transporter = createTransporter();
   const html = `
     <!DOCTYPE html><html lang="tr">
     <body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px;">
@@ -80,27 +66,15 @@ const sendVerificationEmail = async ({ to, firstName, verifyUrl }) => {
         </div>
         <p style="color:#94a3b8;font-size:13px;text-align:center;margin:0;">Bu link <strong>24 saat</strong> geçerlidir. Hesap oluşturmadıysanız görmezden gelin.</p>
         <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;">
-        <p style="color:#cbd5e1;font-size:12px;text-align:center;margin:0;">© 2024 Venta Premium</p>
+        <p style="color:#cbd5e1;font-size:12px;text-align:center;margin:0;">© 2025 Venta Premium</p>
       </div>
     </div>
     </body></html>
   `;
-  if (!transporter) {
-    console.log('\n========== E-POSTA DOĞRULAMA LİNKİ ==========');
-    console.log(`Kullanıcı: ${to}`);
-    console.log(`Link: ${verifyUrl}`);
-    console.log('==============================================\n');
-    return;
-  }
-  await transporter.sendMail({
-    from: `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
-    to, subject: 'E-posta Adresinizi Doğrulayın — Venta Premium', html,
-  });
+  await sendMail({ to, subject: 'E-posta Adresinizi Doğrulayın — Venta Premium', html });
 };
 
-const sendOrderConfirmationEmail = async ({ to, firstName, orderNumber, items, total, shippingCost, tax }) => {
-  const transporter = createTransporter();
-
+const sendOrderConfirmationEmail = async ({ to, firstName, orderNumber, items, total, shippingCost }) => {
   const itemRows = items.map(i =>
     `<tr><td style="padding:8px 0;color:#374151;border-bottom:1px solid #f1f5f9;">${i.productName}</td>
      <td style="padding:8px 0;text-align:center;color:#6b7280;border-bottom:1px solid #f1f5f9;">x${i.quantity}</td>
@@ -138,19 +112,10 @@ const sendOrderConfirmationEmail = async ({ to, firstName, orderNumber, items, t
     </div>
     </body></html>
   `;
-
-  if (!transporter) {
-    console.log(`[EMAIL-MOCK] Sipariş onayı → ${to} | #${orderNumber}`);
-    return;
-  }
-  await transporter.sendMail({
-    from: `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
-    to, subject: `Siparişiniz Alındı — #${orderNumber} | Venta Premium`, html,
-  });
+  await sendMail({ to, subject: `Siparişiniz Alındı — #${orderNumber} | Venta Premium`, html });
 };
 
 const sendShippingEmail = async ({ to, firstName, orderNumber, cargoCompany, cargoTrackingNo }) => {
-  const transporter = createTransporter();
   const html = `
     <!DOCTYPE html><html lang="tr">
     <body style="font-family:Arial,sans-serif;background:#f4f4f4;padding:20px;">
@@ -174,15 +139,7 @@ const sendShippingEmail = async ({ to, firstName, orderNumber, cargoCompany, car
     </div>
     </body></html>
   `;
-
-  if (!transporter) {
-    console.log(`[EMAIL-MOCK] Kargo bildirimi → ${to} | #${orderNumber}`);
-    return;
-  }
-  await transporter.sendMail({
-    from: `"${process.env.FROM_NAME}" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
-    to, subject: `Siparişiniz Kargoya Verildi — #${orderNumber} | Venta Premium`, html,
-  });
+  await sendMail({ to, subject: `Siparişiniz Kargoya Verildi — #${orderNumber} | Venta Premium`, html });
 };
 
 module.exports = { sendPasswordResetEmail, sendVerificationEmail, sendOrderConfirmationEmail, sendShippingEmail };
