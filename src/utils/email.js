@@ -5,7 +5,9 @@ const getResend = () => {
   return new Resend(process.env.RESEND_API_KEY);
 };
 
-const FROM = `"${process.env.FROM_NAME || 'Venta Premium'}" <${process.env.FROM_EMAIL || 'noreply@ventapremium.com.tr}>`;
+const FROM_NAME_VAL = process.env.FROM_NAME || 'Venta Premium';
+const FROM_EMAIL_VAL = process.env.FROM_EMAIL || 'onboarding@resend.dev';
+const FROM = '"' + FROM_NAME_VAL + '" <' + FROM_EMAIL_VAL + '>';
 
 const sendMail = async ({ to, subject, html }) => {
   const resend = getResend();
