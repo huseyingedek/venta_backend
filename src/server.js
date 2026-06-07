@@ -34,6 +34,8 @@ app.use(helmet({
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
+  'https://ventapremium.com.tr',
+  'https://www.ventapremium.com.tr',
   process.env.CLIENT_URL,
 ].filter(Boolean);
 
