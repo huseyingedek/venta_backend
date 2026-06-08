@@ -73,7 +73,8 @@ router.post('/forgot-password', async (req, res, next) => {
       { expiresIn: '1h' }
     );
 
-    const resetUrl = `${process.env.CLIENT_URL}/auth/reset-password?token=${token}&id=${user.id}`;
+    const clientBase = (process.env.FRONTEND_URL || process.env.CLIENT_URL || 'https://ventapremium.com.tr').split(',')[0].trim();
+    const resetUrl = `${clientBase}/auth/reset-password?token=${token}&id=${user.id}`;
 
     await sendPasswordResetEmail({
       to: user.email,

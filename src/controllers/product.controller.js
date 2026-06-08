@@ -11,10 +11,11 @@ const getProducts = async (req, res, next) => {
     } = req.query;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const where = { status };
+    const where = {};
+    // 'ALL' gönderilirse status filtresi uygulanmaz (admin tüm ürünleri görmek için)
+    if (status !== 'ALL') where.status = status;
 
     if (category) {
-      // Kategori ve tüm alt kategorilerini bul
       const categoryIds = await getAllCategoryIds(category);
       if (categoryIds.length > 0) {
         where.categoryId = { in: categoryIds };
@@ -22,7 +23,8 @@ const getProducts = async (req, res, next) => {
         where.category = { slug: category };
       }
     }
-    if (featured === 'true') where.isFeatured = true;
+    if (featured === 'true')  where.isFeatured = true;
+    if (featured === 'false') where.isFeatured = false;
     if (isNew === 'true') where.isNew = true;
     if (hasDiscount === 'true') where.comparePrice = { not: null };
     if (search) {
