@@ -81,7 +81,7 @@ router.get('/orders', ...adminOnly, async (req, res, next) => {
         where,
         skip: (pageNum - 1) * limitNum,
         take: limitNum,
-        include: { user: { select: { firstName: true, lastName: true, email: true } }, items: true },
+        include: { user: { select: { firstName: true, lastName: true, email: true, phone: true } }, items: true },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.order.count({ where }),
@@ -168,6 +168,53 @@ router.get('/orders/:id', ...adminOnly, async (req, res, next) => {
     });
     if (!order) return res.status(404).json({ success: false, message: 'Sipariş bulunamadı.' });
     res.json({ success: true, data: order });
+  } catch (err) { next(err); }
+});
+
+// GET /api/v1/admin/users/:id/details — Sepet + Favori + Son siparişler
+router.get('/users/:id/details', ...adminOnly, async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+
+    const [cart, wishlist, orders] = await Promise.all([
+      prisma.cart.findUnique({
+        where: { userId },
+        include: {
+          items: {
+            include: {
+              product: { select: { id: true, name: true, thumbnail: true, price: true, slug: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      }),
+      prisma.wishlist.findMany({
+        where: { userId },
+        include: {
+          product: { select: { id: true, name: true, thumbnail: true, price: true, slug: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.order.findMany({
+        where: { userId },
+        select: {
+          id: true, orderNumber: true, total: true, status: true, createdAt: true,
+          items: { select: { quantity: true }, take: 1 },
+          _count: { select: { items: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        cart: cart?.items ?? [],
+        wishlist,
+        recentOrders: orders,
+      },
+    });
   } catch (err) { next(err); }
 });
 

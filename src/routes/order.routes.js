@@ -67,7 +67,7 @@ router.post('/', authenticate, async (req, res, next) => {
 
     const taxRate = 0.18;
     const tax = subtotal * taxRate;
-    const shippingCost = subtotal >= 500 ? 0 : 29.99;
+    const shippingCost = 149;
     const total = subtotal + tax + shippingCost;
 
     const order = await prisma.order.create({
