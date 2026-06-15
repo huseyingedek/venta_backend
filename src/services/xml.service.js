@@ -27,6 +27,69 @@ const getTaxRateByCategory = (categoryPath = '') => {
 };
 
 /**
+ * XML'deki varyantları (beden/renk/vb.) ayrıştırır.
+ * Desteklenen formatlar:
+ *  1. item.options.option  → { name: "Beden", values: { value: "S" | ["S","M","L"] } }
+ *  2. item.variants.variant → { name: "Kırmızı / XL", stock: 5 }
+ *  3. item.option1, item.option2, ... → "Beden:S,M,L"  "Renk:Kırmızı"
+ */
+const parseVariants = (item) => {
+  const variants = [];
+
+  // Format 1: <options><option name="Beden"><values><value>S</value>...</values></option></options>
+  if (item.options?.option) {
+    const options = Array.isArray(item.options.option) ? item.options.option : [item.options.option];
+    for (const opt of options) {
+      const optName = opt.name || opt._ || 'Seçenek';
+      // values.value tek string veya dizi olabilir
+      let vals = opt.values?.value || opt.value || [];
+      if (!Array.isArray(vals)) vals = [vals];
+      for (const val of vals) {
+        const v = typeof val === 'object' ? (val._ || val.name || JSON.stringify(val)) : String(val);
+        if (v) variants.push({ name: `${optName}: ${v}`, stock: 99, isActive: true });
+      }
+    }
+    if (variants.length > 0) return variants;
+  }
+
+  // Format 2 (xmltedarik.com): <variants><variant><name1>Beden</name1><value1>M</value1><name2>Renk</name2><value2>Kırmızı</value2><quantity>100</quantity></variant></variants>
+  if (item.variants?.variant) {
+    const variantList = Array.isArray(item.variants.variant) ? item.variants.variant : [item.variants.variant];
+    for (const v of variantList) {
+      const vStock = parseInt(v.quantity || v.stock || 99);
+
+      // name1/value1 birincil varyant (ör: Beden: M)
+      if (v.name1 && v.value1) {
+        let label = `${v.name1}: ${v.value1}`;
+        // name2/value2 ikincil varyant varsa birleştir (ör: Renk: Kırmızı)
+        if (v.name2 && v.value2) label += ` / ${v.name2}: ${v.value2}`;
+        variants.push({ name: label, stock: vStock, isActive: true });
+      } else {
+        // Fallback: optionName/optionValue veya name/value
+        const optName  = v.optionName || v.name  || 'Seçenek';
+        const optValue = v.optionValue || v.value || v._ || null;
+        if (optValue) variants.push({ name: `${optName}: ${optValue}`, stock: vStock, isActive: true });
+      }
+    }
+    if (variants.length > 0) return variants;
+  }
+
+  // Format 3: option1="Beden:S,M,L" option2="Renk:Kırmızı,Beyaz"
+  for (let i = 1; i <= 5; i++) {
+    const raw = item[`option${i}`] || item[`varyant${i}`];
+    if (!raw) continue;
+    const [label, valueStr] = String(raw).split(':');
+    if (!valueStr) continue;
+    const vals = valueStr.split(',').map(s => s.trim()).filter(Boolean);
+    for (const val of vals) {
+      variants.push({ name: `${label.trim()}: ${val}`, stock: 99, isActive: true });
+    }
+  }
+
+  return variants;
+};
+
+/**
  * xmltedarik.com XML yapısını parse et
  * <products><product>...</product></products>
  */
@@ -154,11 +217,19 @@ const syncXmlFeed = async (feedId) => {
           finalCategoryId = def.id;
         }
 
-        const taxRate = getTaxRateByCategory(categoryPath);
+        // XML'de tax varsa onu kullan (0.2 → %20), yoksa kategoriye göre hesapla
+        const xmlTax = item.tax ? Math.round(parseFloat(item.tax) * 100) : null;
+        const taxRate = xmlTax || getTaxRateByCategory(categoryPath);
 
         const existing = await prisma.product.findFirst({
           where: { externalId, supplierId: feed.supplierId },
         });
+
+        // ── Varyantları parse et ────────────────────────────────────
+        // xmltedarik.com formatı: item.options.option (tek veya dizi)
+        // Her option: { name: "Beden", values: { value: "S" | ["S","M","L"] } }
+        // veya item.variants.variant formatı
+        const parsedVariants = parseVariants(item);
 
         if (existing) {
           // Güncelle — slug ve sku değiştirme
@@ -184,6 +255,15 @@ const syncXmlFeed = async (feedId) => {
               data: imageUrls.map((url, i) => ({ productId: existing.id, url, sortOrder: i })),
             });
           }
+
+          // Varyantları güncelle
+          if (parsedVariants.length > 0) {
+            await prisma.productVariant.deleteMany({ where: { productId: existing.id } });
+            await prisma.productVariant.createMany({
+              data: parsedVariants.map(v => ({ productId: existing.id, ...v })),
+            });
+          }
+
           updated++;
         } else {
           const slug = await generateUniqueSlug(name, externalId);
@@ -219,6 +299,14 @@ const syncXmlFeed = async (feedId) => {
               data: imageUrls.map((url, i) => ({ productId: newProduct.id, url, sortOrder: i })),
             });
           }
+
+          // Varyantları kaydet
+          if (parsedVariants.length > 0) {
+            await prisma.productVariant.createMany({
+              data: parsedVariants.map(v => ({ productId: newProduct.id, ...v })),
+            });
+          }
+
           created++;
         }
       } catch (itemErr) {
