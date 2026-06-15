@@ -1,8 +1,11 @@
 const router = require('express').Router();
+const multer = require('multer');
 const prisma = require('../config/prisma');
 const { authenticate, authorize } = require('../middleware/auth.middleware');
-const { syncXmlFeed, syncAllFeeds } = require('../services/xml.service');
+const { syncXmlFeed, syncAllFeeds, syncXmlContent } = require('../services/xml.service');
 const slugify = require('../utils/slugify');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
 const adminOnly = [authenticate, authorize('ADMIN', 'SUPER_ADMIN')];
 
@@ -49,6 +52,16 @@ router.post('/:id/feeds', ...adminOnly, async (req, res, next) => {
 router.post('/feeds/:feedId/sync', ...adminOnly, async (req, res, next) => {
   try {
     const result = await syncXmlFeed(req.params.feedId);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/suppliers/feeds/:feedId/sync-file  - XML dosyası yükleyerek sync
+router.post('/feeds/:feedId/sync-file', ...adminOnly, upload.single('xml'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'XML dosyası gerekli.' });
+    const xmlContent = req.file.buffer.toString('utf-8');
+    const result = await syncXmlContent(req.params.feedId, xmlContent);
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
 });

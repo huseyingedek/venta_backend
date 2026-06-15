@@ -366,4 +366,127 @@ const syncAllFeeds = async () => {
   return results;
 };
 
-module.exports = { syncXmlFeed, syncAllFeeds };
+/**
+ * Hazır XML string'i kullanarak feed'i senkronize et (dosya upload akışı)
+ */
+const syncXmlContent = async (feedId, xmlContent) => {
+  const feed = await prisma.xmlFeed.findUnique({
+    where: { id: feedId },
+    include: { supplier: true },
+  });
+  if (!feed) throw new Error('Feed bulunamadı.');
+
+  logger.info(`XML file-upload sync başladı: ${feed.name}`);
+
+  try {
+    const parsed = await parser.parseStringPromise(xmlContent);
+    const products = parseXmlTedarik(parsed);
+    if (!products) throw new Error('XML yapısı tanınamadı (products.product bulunamadı).');
+
+    let created = 0, updated = 0, skipped = 0;
+
+    for (const item of products) {
+      try {
+        if (item.active === '0' || item.active === 0) { skipped++; continue; }
+
+        const externalId = String(item.id || '').trim();
+        const sku        = String(item.productCode || '').trim() || null;
+        const name       = String(item.name || '').trim();
+        const price      = parseFloat(item.listPrice || item.price || 0);
+        const stock      = parseInt(item.quantity || 0);
+        const description = item.detail ? String(item.detail).trim() : null;
+        const thumbnail  = item.image1 || null;
+
+        if (!name || !externalId) { skipped++; continue; }
+
+        const imageUrls = ['image1','image2','image3','image4','image5']
+          .map(k => item[k]).filter(Boolean);
+
+        const categoryPath = String(item.category || item.main_category || '').trim();
+        const categoryId = await findOrCreateCategory(categoryPath);
+
+        let finalCategoryId = categoryId;
+        if (!finalCategoryId) {
+          const def = await prisma.category.upsert({
+            where: { slug: 'genel' }, update: {},
+            create: { name: 'Genel', slug: 'genel' },
+          });
+          finalCategoryId = def.id;
+        }
+
+        const xmlTax = item.tax ? Math.round(parseFloat(item.tax) * 100) : null;
+        const taxRate = xmlTax || getTaxRateByCategory(categoryPath);
+        const parsedVariants = parseVariants(item);
+
+        const existing = await prisma.product.findFirst({
+          where: { externalId, supplierId: feed.supplierId },
+        });
+
+        if (existing) {
+          await prisma.product.update({
+            where: { id: existing.id },
+            data: { name, price, stock, description, thumbnail, categoryId: finalCategoryId, taxRate,
+              status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK', xmlData: item },
+          });
+          await prisma.productImage.deleteMany({ where: { productId: existing.id } });
+          if (imageUrls.length > 0) {
+            await prisma.productImage.createMany({
+              data: imageUrls.map((url, i) => ({ productId: existing.id, url, sortOrder: i })),
+            });
+          }
+          if (parsedVariants.length > 0) {
+            await prisma.productVariant.deleteMany({ where: { productId: existing.id } });
+            await prisma.productVariant.createMany({
+              data: parsedVariants.map(v => ({ productId: existing.id, ...v })),
+            });
+          }
+          updated++;
+        } else {
+          const slug = await generateUniqueSlug(name, externalId);
+          let finalSku = sku;
+          if (finalSku) {
+            const skuExists = await prisma.product.findUnique({ where: { sku: finalSku } });
+            if (skuExists) finalSku = `${finalSku}-${externalId.slice(-4)}`;
+          }
+          const newProduct = await prisma.product.create({
+            data: { name, slug, price, stock, description, thumbnail, sku: finalSku,
+              externalId, supplierId: feed.supplierId, categoryId: finalCategoryId,
+              taxRate, source: 'XML', status: stock > 0 ? 'ACTIVE' : 'OUT_OF_STOCK', xmlData: item },
+          });
+          if (imageUrls.length > 0) {
+            await prisma.productImage.createMany({
+              data: imageUrls.map((url, i) => ({ productId: newProduct.id, url, sortOrder: i })),
+            });
+          }
+          if (parsedVariants.length > 0) {
+            await prisma.productVariant.createMany({
+              data: parsedVariants.map(v => ({ productId: newProduct.id, ...v })),
+            });
+          }
+          created++;
+        }
+      } catch (itemErr) {
+        logger.error(`Ürün işlenirken hata [${item?.id}]: ${itemErr.message}`);
+        skipped++;
+      }
+    }
+
+    await prisma.xmlFeed.update({
+      where: { id: feedId },
+      data: { lastSyncAt: new Date(), lastSyncStatus: 'success',
+        lastSyncMessage: `Dosyadan yüklendi — Oluşturuldu: ${created}, Güncellendi: ${updated}, Atlandı: ${skipped}` },
+    });
+
+    logger.info(`XML file sync tamamlandı — Oluşturuldu: ${created}, Güncellendi: ${updated}, Atlandı: ${skipped}`);
+    return { created, updated, skipped };
+  } catch (err) {
+    logger.error(`XML file sync hatası (${feed.name}): ${err.message}`);
+    await prisma.xmlFeed.update({
+      where: { id: feedId },
+      data: { lastSyncAt: new Date(), lastSyncStatus: 'error', lastSyncMessage: err.message },
+    });
+    throw err;
+  }
+};
+
+module.exports = { syncXmlFeed, syncAllFeeds, syncXmlContent };
