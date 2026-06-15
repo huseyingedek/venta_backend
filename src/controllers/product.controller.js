@@ -28,11 +28,16 @@ const getProducts = async (req, res, next) => {
     if (isNew === 'true') where.isNew = true;
     if (hasDiscount === 'true') where.comparePrice = { not: null };
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { sku: { contains: search, mode: 'insensitive' } },
-      ];
+      const words = search.trim().split(/\s+/).filter(Boolean);
+      if (words.length === 1) {
+        // Tek kelime: sadece name içinde ara
+        where.name = { contains: words[0], mode: 'insensitive' };
+      } else {
+        // Çok kelime: tüm kelimeler name'de geçmeli (AND)
+        where.AND = words.map(w => ({
+          name: { contains: w, mode: 'insensitive' },
+        }));
+      }
     }
     if (minPrice || maxPrice) {
       where.price = {};

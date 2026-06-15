@@ -18,6 +18,20 @@ router.get('/', authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /api/v1/orders/by-number/:orderNumber — public, sipariş takip / başarı sayfası
+router.get('/by-number/:orderNumber', async (req, res, next) => {
+  try {
+    const order = await prisma.order.findFirst({
+      where: { orderNumber: req.params.orderNumber },
+      include: { items: { include: { product: { select: { name: true, thumbnail: true } } } }, address: true },
+    });
+    if (!order) return res.status(404).json({ success: false, message: 'Sipariş bulunamadı.' });
+    // Hassas bilgileri gizle
+    const { address, ...rest } = order;
+    res.json({ success: true, data: rest });
+  } catch (err) { next(err); }
+});
+
 // GET /api/v1/orders/:id
 router.get('/:id', authenticate, async (req, res, next) => {
   try {
@@ -113,6 +127,89 @@ router.post('/', authenticate, async (req, res, next) => {
     }
 
     res.status(201).json({ success: true, data: order });
+  } catch (err) { next(err); }
+});
+
+// POST /api/v1/orders/guest — Üye olmadan sipariş
+router.post('/guest', async (req, res, next) => {
+  try {
+    const { firstName, lastName, email, phone, address, items: cartItems, paymentMethod = 'CREDIT_CARD', notes } = req.body;
+
+    if (!firstName || !lastName || !email || !phone || !address || !cartItems?.length) {
+      return res.status(400).json({ success: false, message: 'Eksik bilgi.' });
+    }
+
+    // Ürünleri DB'den doğrula
+    const productIds = cartItems.map(i => i.productId);
+    const products = await prisma.product.findMany({ where: { id: { in: productIds } } });
+    if (products.length !== productIds.length) {
+      return res.status(400).json({ success: false, message: 'Geçersiz ürün.' });
+    }
+
+    // Guest kullanıcı bul veya oluştur
+    let guestUser = await prisma.user.findUnique({ where: { email } });
+    if (!guestUser) {
+      const bcrypt = require('bcryptjs');
+      const randomPw = await bcrypt.hash(Math.random().toString(36), 10);
+      guestUser = await prisma.user.create({
+        data: { firstName, lastName, email, phone, password: randomPw, role: 'CUSTOMER', isActive: true, emailVerified: true },
+      });
+    }
+
+    // Adres oluştur
+    const addr = await prisma.address.create({
+      data: { userId: guestUser.id, title: 'Teslimat Adresi', firstName, lastName, phone, ...address },
+    });
+
+    // Sipariş kalemleri
+    let subtotal = 0;
+    const orderItems = cartItems.map(item => {
+      const product = products.find(p => p.id === item.productId);
+      const price = Number(product.price);
+      subtotal += price * item.quantity;
+      return {
+        productId: item.productId,
+        productName: product.name,
+        productSku: product.sku,
+        quantity: item.quantity,
+        unitPrice: price,
+        total: price * item.quantity,
+      };
+    });
+
+    const taxRate = 0.18;
+    const tax = subtotal * taxRate;
+    const shippingCost = 149;
+    const total = subtotal + tax + shippingCost;
+
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: generateOrderNumber(),
+        userId: guestUser.id,
+        addressId: addr.id,
+        paymentMethod,
+        notes,
+        subtotal,
+        tax,
+        shippingCost,
+        total,
+        items: { create: orderItems },
+      },
+      include: { items: true, address: true },
+    });
+
+    // E-posta bildirimi
+    sendOrderConfirmationEmail({
+      to: email,
+      firstName,
+      orderNumber: order.orderNumber,
+      items: orderItems,
+      total,
+      shippingCost,
+      tax,
+    }).catch(() => {});
+
+    res.status(201).json({ success: true, data: { ...order, guestUserId: guestUser.id } });
   } catch (err) { next(err); }
 });
 
