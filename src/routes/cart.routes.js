@@ -3,8 +3,28 @@ const prisma = require('../config/prisma');
 const { authenticate } = require('../middleware/auth.middleware');
 
 const getOrCreateCart = async (userId) => {
-  let cart = await prisma.cart.findUnique({ where: { userId }, include: { items: { include: { product: { select: { id: true, name: true, price: true, comparePrice: true, thumbnail: true, stock: true, status: true, taxRate: true, sku: true } } } } } });
-  if (!cart) cart = await prisma.cart.create({ data: { userId }, include: { items: { include: { product: true } } } });
+  let cart = await prisma.cart.findUnique({
+    where: { userId },
+    include: {
+      items: {
+        include: {
+          product: { select: { id: true, name: true, slug: true, price: true, comparePrice: true, thumbnail: true, stock: true, status: true, taxRate: true, sku: true } },
+          variant: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
+  if (!cart) cart = await prisma.cart.create({
+    data: { userId },
+    include: {
+      items: {
+        include: {
+          product: { select: { id: true, name: true, slug: true, price: true, comparePrice: true, thumbnail: true, stock: true, status: true, taxRate: true, sku: true } },
+          variant: { select: { id: true, name: true } },
+        },
+      },
+    },
+  });
   return cart;
 };
 

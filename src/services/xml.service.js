@@ -489,4 +489,4 @@ const syncXmlContent = async (feedId, xmlContent) => {
   }
 };
 
-module.exports = { syncXmlFeed, syncAllFeeds, syncXmlContent };
+module.exports = { syncXmlFeed, syncAllFeeds, syncXmlContent, parseVariants };
