@@ -33,7 +33,7 @@ app.use(helmet({
 // CORS
 const allowedOrigins = [
   'http://localhost:3000',
-  'http://localhost:3001',
+  'http://cud2v4q6o5tb22yimtcoldav.94.130.109.190.sslip.io/api/v1',
   'https://ventapremium.com.tr',
   'https://www.ventapremium.com.tr',
   process.env.CLIENT_URL,
